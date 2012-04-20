@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script type="text/javascript">
+
+      //Thank you, D.C. : http://www.crockford.com/javascript/inheritance.html
+      Function.prototype.method = function (name, func) {
+         this.prototype[name] = func;
+         return this;
+      };
+      Function.method('inherits', function (parent) {
+         var d = {}, p = (this.prototype = new parent());
+         this.method('uber', function uber(name) {
+            if (!(name in d)) {
+               d[name] = 0;
+            }
+            var f, r, t = d[name], v = parent.prototype;
+            if (t) {
+               while (t) {
+                  v = v.constructor.prototype;
+                  t -= 1;
+               }
+               f = v[name];
+            } else {
+               f = p[name];
+               if (f == this[name]) {
+                  f = v[name];
+               }
+            }
+            d[name] += 1;
+            r = f.apply(this, Array.prototype.slice.apply(arguments, [1]));
+            d[name] -= 1;
+            return r;
+         });
+         return this;
+      });
+
+      var output = [];
+
+      function power(input1,input2){
+         var r = 1;
+         for(var i=0; i<input2; i++)
+            r*=input1;
+         return r;
+      }
+
+      function tt(
+      a,
+      b
+      ){
+      console.log(a+' '
+      +b)
+        }
+
+      Asynchronizer = {
+          //key : top_caller1_caller2...callerN_functionName
+          //val : {asynced : [functionized loops (named with above + _i], iterationsPerAsyncCall : [numbers]}
+         functionRegistry : {}
+      }
+
+      function process(inputPointer,input,token,activeContainer){
+         var result = tokenize(token);
+         if(result != null){
+            switch(result){
+               case 'function':
+                  var func = standardize(token,input,'function');
+                  activeContainer.push(func.data);
+                  scan(func.data.content,func.data.contents); //Recurse
+                  inputPointer = func.newPos;
+                  //delete func.data.content;
+                  break;
+               case 'forLoop':
+                  var forLoop = standardize(token,input,'forLoop');
+                  activeContainer.push(forLoop.data);
+                  scan(forLoop.data.content,forLoop.data.contents); //Recurse
+                  inputPointer = forLoop.newPos;
+                  //delete forLoop.data.content;
+                  break;
+               case 'plainline': //This is the default. Must be last case or else will match most prior tokens
+                  //Ignore trim-worthy things
+                  if(!isBlank(token)){
+                     var plainline = standardize(token,input,'plainline');
+                     activeContainer.push(plainline.data);
+                     inputPointer = plainline.newPos;
+                  }
+                  break;
+            }
+            //Position in the scan loop necessitates storing part of the raw remainder for subsequent scanning. Refactor later.
+            token = input[inputPointer];
+         }
+
+         return {iPointer : inputPointer, raw : token};
+      }
+
+      function scan(input,activeContainer){
+         var scanner = '';
+         var token = '';
+         var updated;
+         var size = input.length;
+         for(var inputPointer=0; inputPointer<size; inputPointer++){
+            token += input[inputPointer];
+            updated = process(inputPointer,input,token,activeContainer);
+            inputPointer = updated.iPointer;
+            token = updated.raw;
+         }
+         //Finish the remaining token. Should be plainline.
+         process(inputPointer,input,token,activeContainer);
+         return output;
+      }
+
+      function isBlank(t){
+         return t.replace(/\s/g,'').length == 0;
+      }
+
+      function tokenize(input){
+         var t = tokens;
+         var size = t.length;
+         for(var i=0; i<size; i++){
+            if(t[i].rule.test(input))
+               return (t[i].name);
+         }
+         return null;
+      }
+
+      function createJumpOff(forloop){
+         var f_name; //Determined from closure scope.
+         var f_call; //Plainline call to the function.
+         var f_func; //function created from forLoop body.
+         var sig = forloop.sig;
+         //Parse the parts of the loop
+         var start = sig.indexOf('for('), end = sig.lastIndexOf(')');
+         sig = sig.substring(start+4,end);
+         var statements = sig.split(';');
+         //Sig
+         f_func = 'function(){\n';
+         //Check condition
+         f_func += 'if('+statements[1]+'){Asynchronizer.activeCall = setTimeout('+f_name+'('+statements+') return}'
+         //Closing
+         f_func += '}';
+      }
+
+      function asynchronize(input){
+
+         function trimParam(input)
+         {
+            var ws = /\s+/;
+            var pieces = (' '+input+' ').split(ws);
+            pieces = pieces.slice(1,pieces.length-1);
+            if(pieces.length > 1) throw('Invalid parameter '+input+' : too much internal whitespace.');
+            else return pieces[0];
+         }
+
+         if(input.type != 'Func')
+         {
+            throw {message: 'asynchronize called can only be called on a Func object', problem: input}
+         }
+         //Extract args
+         input.args = input.sig.substring(input.sig.indexOf('(')+1,input.sig.indexOf(')')).split(',');
+         var funcConstructorParams = [];
+
+         for(var a=0; a<input.args.length; a++){
+            funcConstructorParams.push(trimParam(input.args[a]));
+         }
+         var funcBody = '';
+         var size = input.contents.length;
+         for(var i=0; i<size; i++){
+            var element = input.contents[i];
+            switch(element.type){
+               case 'Plainline' :
+                  funcBody += element.content;
+                  break;
+               case 'ForLoop' :
+                  var innerFunc = createJumpOff(element);
+                  A.jumpOffs.append(innerFunc.func);
+                  funcBody += ''
+                  funcBody += innerFunc.entry;
+                  asynchronize(element); // recurse
+                  break;
+               case 'Func' :
+                  break;
+            }
+         }
+         funcConstructorParams.push(funcBody);
+         var temp = Function.apply(window,funcConstructorParams);
+         temp.prototype.Asynchronizer = Asynchronizer;
+         return temp;
+      }
+
+      var forLoop_regex = /^\s*for\s*\($/;  //.*;.*;.*\)
+      var function_regex = /^\s*function\s*\S+\($/; //(((.*,)+(.*){1})|((.*)))\)
+      //Default - will capture all valid JS statements (and some expressions).
+      var plainline_regex = /^\s*.*(;|\n){1}$/;
+      
+      
+      
+      
+      
+      
+      var tokens = [
+         {name: 'forLoop', rule: forLoop_regex},
+         {name: 'function', rule: function_regex},
+         {name: 'plainline', rule: plainline_regex}
+      ];
+      /*
+      function getContents(token,input,type){
+         switch(type){
+            case 'function':
+               var start = input.indexOf(tokenReg);
+               var level = 1, iter = start + token.length;
+               while(level != 0){
+                  if(iter > input.length)
+                     throw {message: "Function not well formed", problem: input}
+                  iter++;
+                  if(input.charAt(iter) == '}')
+                     level--;
+                  else if(input.charAt(iter) == '{')
+                     level++;
+               }
+               return input.substring(start+token.length,iter-1);
+               break;
+            case 'forLoop':
+               var start = input.search(t);
+               //Determine whether braced or not, and fix if not.
+               if(input.substring(start).search('{') != input.substring(start).search(/[^\n\W]/)){
+                  input = input.replace(token,token+'\n{');
+                  //Find end of unbraced statement.
+               }
+               else
+                  start = input.substring(start).search('{');
+               var level = 1, iter = start+1;
+               while(level != 0){
+                  iter++;
+                  if(input.charAt(iter) == '}') level--;
+                  else if(input.charAt(iter) == '{') level++;
+               }
+               return input.substring(start+1,iter-1);
+               break;
+         }
+      }
+      */
+      function standardize(token,input,type){
+         var ret, callerIteratorPosition=0;
+         switch(type){
+            case 'function':
+               ret = new Func();
+               var start = input.indexOf(token);
+               //Get signature
+               var paramListLevel = 1, iter = start + token.length;
+               while(paramListLevel != 0){
+                  if(iter > input.length)
+                     throw {message: "Function parameter list not well formed", problem: input}
+                  iter++;
+                  if(input.charAt(iter) == ')')
+                     paramListLevel--;
+                  else if(input.charAt(iter) == '(')
+                     paramListLevel++;
+               }
+               callerIteratorPosition += iter;
+               //Clean up sig
+               ret.sig = input.substring(start,iter+1).replace(/\s{2,}/g,'')//.replace(/\n{2,}/g,'\n');
+               //Find body beginning
+               var rest = input.substring(iter);
+               iter = rest.indexOf('{');
+               var bodyBeginPos = iter+1;
+               level = 1;
+               while(level != 0){
+                  if(iter > rest.length)
+                     throw {message: "Function body not well formed", problem: input}
+                  iter++;
+                  if(rest.charAt(iter) == '}')
+                     level--;
+                  else if(rest.charAt(iter) == '{')
+                     level++;
+               }
+               callerIteratorPosition += iter+1; //+1 for opening bracket
+               ret.content = rest.substring(bodyBeginPos,iter).replace(/\s{2,}/g,'\n'); //.replace(/\n{2,}/g,' ')
+               break;
+            case 'forLoop':
+               ret = new ForLoop();
+               var start = input.indexOf(token);
+               //Get signature.
+               var paramListLevel = 1, iter = start + token.length, semicols = 0;
+               while(paramListLevel != 0){
+                  if(iter == input.length && semicols != 2)
+                     throw {message: "For loop parameter list not well formed", problem: input}
+                  iter++;
+                  switch(input.charAt(iter)){
+                     case ')': paramListLevel--; break;
+                     case '(': paramListLevel++; break;
+                     case ';': semicols++; break;
+                  }
+               }
+               callerIteratorPosition += iter;
+               ret.sig = input.substring(start,iter+1).replace(/\s{2,}/g,' ');
+               //Determine whether braced or not, and fix if not
+               var rest = input.substring(iter+2);
+               if(rest.indexOf('{') == -1 || rest.indexOf('{') > rest.search(/\S/)){
+                  var statement_end = rest.search(/[\n;]/);
+                  rest = '{'+rest.substring(0,statement_end+1)+'}';
+               }
+               //Find body beginning
+               iter = 0;
+               var bodyBeginPos = iter+1;
+               level = 1;
+               while(level != 0){
+                  if(iter > rest.length)
+                     throw {message: "For loop body not well formed", problem: input}
+                  iter++;
+                  if(rest.charAt(iter) == '}')
+                     level--;
+                  else if(rest.charAt(iter) == '{')
+                     level++;
+               }
+               callerIteratorPosition += iter+1; //+1 for expr. terminator?
+               ret.content = rest.substring(bodyBeginPos,iter).replace(/\s{2,}/g,'\n');
+               break;
+            case 'plainline':
+               ret = new Plainline();
+               /* Taking this out because JS interprets the statement terminator
+better on its own.
+               var semicolon = token.charAt(token.length-1) == ';' ? '' : ';'
+               ret.content = token + semicolon;
+               */
+               ret.content = token;
+               ret.sig = '(plainline)'
+               var callerIteratorPosition = input.indexOf(token) + token.length;
+               break;
+         }
+         return  {data: ret, newPos: callerIteratorPosition};
+      }
+
+      //Classes. Expression is abstract base.
+      function Expression(sig,content)
+      {
+         if(typeof sig != 'string') sig = '';
+         if(typeof content != 'string') content = '';
+         this.sig = sig;
+         this.type = 'Expression'
+         this.content = content
+      }
+      function ForLoop(sig,content)
+      {
+         this.content = content;
+         this.contents = []; //Will replace "content" when filled.
+         this.type = 'ForLoop'
+      }
+      ForLoop.inherits(Expression);
+
+      function Func(sig,contents)
+      {
+         this.contents = []; //Will replace "content" when filled.
+         this.type = 'Func'
+      }
+      Func.inherits(Expression);
+
+      function Plainline(content)
+      {
+         this.type = 'Plainline'
+      }
+      Plainline.inherits(Expression);
+
+
+
+      var input = power.toString()
+      scan(input,output);
+      console.log(output);
+      var output2 = [];
+      scan(tt.toString(),output2)
+      console.log(output2);
+
+      </script>
+
+</head>
+<body>
+
+</body>
+</html>
